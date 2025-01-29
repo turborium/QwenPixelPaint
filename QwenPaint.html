@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Art Editor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .controls {
+            margin-bottom: 10px;
+        }
+        .controls button {
+            padding: 5px 10px;
+            margin-right: 5px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+        .controls button.active {
+            background-color: #0056b3;
+        }
+        .color-picker {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+        .color-picker div {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #ccc;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .color-picker div:hover {
+            border-color: #007bff;
+        }
+        .color-picker div.active {
+            border-color: #0056b3;
+        }
+        #container {
+            position: relative;
+            display: inline-block;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #ffffff;
+        }
+        #mainCanvas, #gridCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: crosshair;
+        }
+        #gridCanvas {
+            pointer-events: none; /* События мыши проходят сквозь этот канвас */
+        }
+        .canvas-container {
+            position: relative;
+            display: inline-block;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="setTool('draw')" class="active">Draw</button>
+        <button onclick="setTool('fill')">Fill</button>
+        <button onclick="clearCanvas()">Clear</button>
+        <button onclick="undo()">Undo</button>
+        <button onclick="redo()">Redo</button>
+        <button onclick="exportCanvas()">Export PNG</button>
+    </div>
+    <div class="color-picker">
+        <!-- Color picker will be generated here -->
+    </div>
+    <div class="canvas-container">
+        <canvas id="mainCanvas" width="400" height="400"></canvas>
+        <canvas id="gridCanvas" width="400" height="400"></canvas>
+    </div>
+
+    <script>
+        const mainCanvas = document.getElementById('mainCanvas');
+        const mainCtx = mainCanvas.getContext('2d');
+        const gridCanvas = document.getElementById('gridCanvas');
+        const gridCtx = gridCanvas.getContext('2d');
+        const colorPicker = document.querySelector('.color-picker');
+        const controls = document.querySelector('.controls');
+        let currentColor = '#000000';
+        let history = [];
+        let future = [];
+        let tool = 'draw';
+        let lastPoint = null;
+
+        // Initialize color palette
+        const colors = [
+            '#FFFFFF', '#000000', '#FF0000', '#00FF00', '#0000FF',
+            '#FFFF00', '#FF00FF', '#00FFFF', '#800000', '#008000',
+            '#000080', '#808000', '#800080', '#008080', '#C0C0C0',
+            '#808080'
+        ];
+
+        colors.forEach(color => {
+            const colorDiv = document.createElement('div');
+            colorDiv.style.backgroundColor = color;
+            colorDiv.addEventListener('click', () => {
+                currentColor = color;
+                document.querySelectorAll('.color-picker div').forEach(div => div.classList.remove('active'));
+                colorDiv.classList.add('active');
+            });
+            colorPicker.appendChild(colorDiv);
+        });
+
+        // Fill the main canvas with white initially
+        mainCtx.fillStyle = '#FFFFFF';
+        mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+        // Draw grid on grid canvas
+        drawGrid();
+
+        // Save initial state
+        saveState();
+
+        mainCanvas.addEventListener('mousedown', startAction);
+        mainCanvas.addEventListener('mousemove', draw);
+        mainCanvas.addEventListener('mouseup', stopAction);
+        mainCanvas.addEventListener('mouseout', stopAction);
+
+        let isDrawing = false;
+
+        function setTool(newTool) {
+            tool = newTool;
+            mainCanvas.style.cursor = tool === 'draw' ? 'crosshair' : 'cell';
+            controls.querySelectorAll('button').forEach(button => button.classList.remove('active'));
+            controls.querySelector(`button[onclick="setTool('${newTool}')"]`).classList.add('active');
+        }
+
+        function startAction(e) {
+            if (!isDrawing) {
+                isDrawing = true;
+                lastPoint = {x: e.offsetX, y: e.offsetY};
+                if (tool === 'fill') {
+                    fill(e.offsetX, e.offsetY, currentColor);
+                } else {
+                    draw(e);
+                }
+            }
+        }
+
+        function draw(e) {
+            if (!isDrawing || tool !== 'draw') return;
+            const x = e.offsetX - e.offsetX % 10;
+            const y = e.offsetY - e.offsetY % 10;
+            mainCtx.fillStyle = currentColor;
+            mainCtx.fillRect(x, y, 10, 10);
+
+            if (lastPoint) {
+                drawLine(lastPoint.x, lastPoint.y, e.offsetX, e.offsetY);
+            }
+            lastPoint = {x: e.offsetX, y: e.offsetY};
+        }
+
+        function drawLine(x1, y1, x2, y2) {
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+            const sx = x1 < x2 ? 1 : -1;
+            const sy = y1 < y2 ? 1 : -1;
+            let err = dx - dy;
+
+            while (true) {
+                mainCtx.fillRect(Math.floor(x1 / 10) * 10, Math.floor(y1 / 10) * 10, 10, 10);
+                if (Math.abs(x1 - x2) < 5 && Math.abs(y1 - y2) < 5) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x1 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y1 += sy;
+                }
+            }
+        }
+
+        function stopAction() {
+            isDrawing = false;
+            lastPoint = null;
+            saveState();
+        }
+
+        function fill(x, y, newColor) {
+            const imageData = mainCtx.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            const pixelIndex = (y * width + x) * 4;
+            const oldColor = [data[pixelIndex], data[pixelIndex + 1], data[pixelIndex + 2]];
+
+            if (oldColor.every((value, index) => value === parseInt(newColor.substring(1 + index * 2, 3 + index * 2), 16))) return;
+
+            const queue = [{x, y}];
+            while (queue.length) {
+                const {x, y} = queue.shift();
+                const pixelIndex = (y * width + x) * 4;
+                if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+                const currentColor = [data[pixelIndex], data[pixelIndex + 1], data[pixelIndex + 2]];
+                if (!currentColor.every((value, index) => value === oldColor[index])) continue;
+
+                data[pixelIndex] = parseInt(newColor.substring(1, 3), 16);
+                data[pixelIndex + 1] = parseInt(newColor.substring(3, 5), 16);
+                data[pixelIndex + 2] = parseInt(newColor.substring(5, 7), 16);
+
+                queue.push({x: x + 1, y});
+                queue.push({x: x - 1, y});
+                queue.push({x, y: y + 1});
+                queue.push({x, y: y - 1});
+            }
+            mainCtx.putImageData(imageData, 0, 0);
+            saveState();
+        }
+
+        function clearCanvas() {
+            mainCtx.fillStyle = '#FFFFFF';
+            mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+            saveState();
+        }
+
+        function saveState() {
+            if (history.length > 100) history.shift();
+            const currentState = mainCtx.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+            if (history.length === 0 || !areImageDatasEqual(history[history.length - 1], currentState)) {
+                history.push(currentState);
+                future = [];
+            }
+            drawGrid();
+        }
+
+        function areImageDatasEqual(imageData1, imageData2) {
+            if (imageData1.width !== imageData2.width || imageData1.height !== imageData2.height) return false;
+            const data1 = imageData1.data;
+            const data2 = imageData2.data;
+            for (let i = 0; i < data1.length; i++) {
+                if (data1[i] !== data2[i]) return false;
+            }
+            return true;
+        }
+
+        function undo() {
+            if (history.length > 1) {
+                future.push(history.pop());
+                mainCtx.putImageData(history[history.length - 1], 0, 0);
+                drawGrid();
+            }
+        }
+
+        function redo() {
+            if (future.length > 0) {
+                history.push(future.pop());
+                mainCtx.putImageData(history[history.length - 1], 0, 0);
+                drawGrid();
+            }
+        }
+
+        function drawGrid() {
+            gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+            gridCtx.strokeStyle = 'rgba(0, 0, 0, 0.1)'; // Прозрачная сетка
+            gridCtx.lineWidth = 1;
+
+            // Vertical lines
+            for (let x = 10; x < gridCanvas.width; x += 10) {
+                gridCtx.beginPath();
+                gridCtx.moveTo(x, 0);
+                gridCtx.lineTo(x, gridCanvas.height);
+                gridCtx.stroke();
+            }
+
+            // Horizontal lines
+            for (let y = 10; y < gridCanvas.height; y += 10) {
+                gridCtx.beginPath();
+                gridCtx.moveTo(0, y);
+                gridCtx.lineTo(gridCanvas.width, y);
+                gridCtx.stroke();
+            }
+        }
+
+        function exportCanvas() {
+            const link = document.createElement('a');
+            link.href = mainCanvas.toDataURL('image/png');
+            link.download = 'pixel_art.png';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Ensure grid is drawn initially
+        drawGrid();
+
+        // Set initial active color
+        document.querySelectorAll('.color-picker div')[0].classList.add('active');
+
+        // Set initial active tool
+        controls.querySelector('button[onclick="setTool(\'draw\')"]').classList.add('active');
+    </script>
+</body>
+</html>
